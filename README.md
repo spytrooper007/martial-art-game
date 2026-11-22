@@ -7,7 +7,8 @@ The feel takes inspiration from close-quarters "read and react" brawlers: tight 
 
 Everything is made from primitive shapes and procedural animation, so there are no external assets. Every joint
 is driven by a damped spring, with a walk/strafe cycle, lean, a fighter's bounce and hit recoil layered on top.
-There is no hit-freeze: the game never pauses on impact.
+There is no hit-freeze and no hit-stun: the game never pauses on impact, and getting hit never takes control away
+from you (you get knocked back a little instead).
 
 ## How to run
 
@@ -44,7 +45,8 @@ The dummy's attacking limb glows while it winds up, then **flashes bright just b
 
 - **Parry**: press block within 0.16 s of impact. Mashing doesn't work: re-pressing within 0.35 s won't open a new window.
   Parries fill the dummy's structure. Parrying the last hit of a string staggers it.
-- **Block**: safe, but each blocked hit fills *your* structure. When it's full your guard breaks and you're stunned.
+- **Block**: safe, but each blocked hit fills *your* structure. When it's full your guard breaks: you're shoved back
+  and can't block for 0.8 s, but you can still move and dodge.
 - **Perfect avoid**: dodge, duck or hop within about 0.22 s of impact. The dummy's string is cancelled and it's open for a counter.
 - **Counter**: strikes are guarded unless the dummy is open (after a perfect avoid or a final parry). Counters fill its structure.
 - **Structure break**: fill the dummy's structure bar to knock it down for free hits. It gets a little faster each time.

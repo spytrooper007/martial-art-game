@@ -10,7 +10,8 @@ signal stats_changed
 const Poses = preload("res://scripts/poses.gd")
 const Stickman = preload("res://scripts/stickman.gd")
 
-enum S { IDLE, BLOCK, DUCK, DODGE, JUMP, STRIKE, HIT, BROKEN }
+# No stun states: getting hit never takes control away from you.
+enum S { IDLE, BLOCK, DUCK, DODGE, JUMP, STRIKE }
 
 # --- Tuning (seconds / metres). These numbers ARE the game feel. ---
 const MOVE_SPEED := 3.2
@@ -36,8 +37,7 @@ const FLICK_TIME := 0.18        # ...within this long, so a slow push isn't a fl
 const FORWARD_DODGE_DISTANCE := 1.0
 const MOVE_ACCEL := 11.0        # higher = snappier footwork, lower = more momentum
 const TURN_SPEED := 16.0
-const HIT_STUN := 0.45
-const GUARD_BREAK_STUN := 1.2
+const GUARD_BREAK_LOCK := 0.8   # can't block for this long after a guard break (you can still move and dodge)
 
 const WHITE := Color(1, 1, 1)
 const GOLD := Color(1.0, 0.82, 0.25)
@@ -70,6 +70,7 @@ var jump_height := 0.0
 var buffer := {"dodge": -10.0, "jump": -10.0, "strike": -10.0, "flick": -10.0}
 var stats := {"parries": 0, "perfect": 0, "avoids": 0, "blocks": 0, "hits": 0, "counters": 0}
 
+var guard_locked_until := -10.0
 var _pose_dodge_l: Dictionary
 var _pose_dodge_r: Dictionary
 var _pose_block: Dictionary
@@ -101,13 +102,13 @@ func _process(delta: float) -> void:
 	state_time += delta
 	_read_presses()
 
-	if clock - last_structure_gain > 1.5 and state != S.BROKEN:
+	if clock - last_structure_gain > 1.5:
 		structure = maxf(0.0, structure - 12.0 * delta)
 
 	match state:
 		S.IDLE, S.BLOCK:
 			if not _try_actions():
-				var want_block := Input.is_action_pressed("block")
+				var want_block := Input.is_action_pressed("block") and clock >= guard_locked_until
 				if want_block and state != S.BLOCK:
 					_set_state(S.BLOCK)
 				elif not want_block and state != S.IDLE:
@@ -146,13 +147,6 @@ func _process(delta: float) -> void:
 			elif strike_done and _consume("jump"):
 				_set_state(S.JUMP)
 			elif state_time >= STRIKE_TIME:
-				_set_state(S.IDLE)
-		S.HIT:
-			if state_time >= HIT_STUN:
-				_set_state(S.IDLE)
-		S.BROKEN:
-			if state_time >= GUARD_BREAK_STUN:
-				structure = 40.0
 				_set_state(S.IDLE)
 
 	if state != S.IDLE and state != S.BLOCK:
@@ -233,10 +227,6 @@ func _set_state(s: int) -> void:
 		S.STRIKE:
 			strike_done = false
 			body.set_pose(Poses.STRIKE, 38.0)
-		S.HIT:
-			body.set_pose(Poses.HIT, 26.0)
-		S.BROKEN:
-			body.set_pose(Poses.KNEEL, 16.0)
 
 
 ## dir: x = right/left, y = forward/back (relative to facing the dummy).
@@ -373,11 +363,14 @@ func resolve_attack(kind: String, unblockable: bool) -> String:
 		last_structure_gain = clock
 		stats["blocks"] += 1
 		if structure >= 100.0:
-			structure = 100.0
+			structure = 40.0
 			hp -= 8.0
 			body.flash(RED, 0.3)
-			_set_state(S.BROKEN)
-			feedback.emit("GUARD BROKEN", RED, "Blocking fills your structure. Parry or avoid instead.")
+			body.recoil(Vector3(0, -0.5, 4.0))
+			guard_locked_until = clock + GUARD_BREAK_LOCK
+			move_vel = -_forward() * 4.0   # shoved back, but you keep control
+			_set_state(S.IDLE)
+			feedback.emit("GUARD BROKEN", RED, "Can't block for a moment. Blocking fills your structure, so parry or avoid instead.")
 			shake.emit(0.5)
 		else:
 			body.flash(GREY, 0.1)
@@ -402,9 +395,8 @@ func resolve_attack(kind: String, unblockable: bool) -> String:
 	structure = minf(100.0, structure + 8.0)
 	last_structure_gain = clock
 	stats["hits"] += 1
-	jump_height = 0.0
 	body.flash(RED, 0.25)
-	_set_state(S.HIT)
+	move_vel += -_forward() * 1.5     # small knockback slide, no stun
 	body.recoil(Vector3(0, 0.4 if kind == "high" else -0.6, 3.0))
 	shake.emit(0.4)
 	if hp <= 0.0:

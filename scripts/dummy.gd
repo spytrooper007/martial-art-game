@@ -99,7 +99,7 @@ func _process(delta: float) -> void:
 		var vel := (global_position - _prev_pos) / delta
 		body.locomotion = global_transform.basis.inverse() * vel
 	_prev_pos = global_position
-	body.locomotion_weight = 1.0 if state == D.IDLE else (0.4 if state == D.WINDUP else 0.0)
+	body.locomotion_weight = 1.0 if state == D.IDLE else (0.4 if state == D.WINDUP or state == D.RECOVER else 0.15)
 
 	match state:
 		D.IDLE:
@@ -123,6 +123,9 @@ func _process(delta: float) -> void:
 			if state_time >= current_windup:
 				_impact()
 		D.RECOVER:
+			# Flow back toward guard instead of holding the impact pose.
+			if state_time >= 0.1 and state_time - delta < 0.1:
+				body.set_pose(Poses.GUARD, 11.0)
 			if state_time >= RECOVER_TIME:
 				if not combo.is_empty():
 					_begin_attack(combo.pop_front(), true)

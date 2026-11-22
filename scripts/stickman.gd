@@ -72,6 +72,10 @@ func _ready() -> void:
 		var m := StandardMaterial3D.new()
 		m.albedo_color = base_color
 		m.roughness = 0.55
+		# Emission stays enabled (energy 0 when unused) so glows/flashes never
+		# switch shader variants mid-fight, which can hitch the frame.
+		m.emission_enabled = true
+		m.emission_energy_multiplier = 0.0
 		_materials[g] = m
 		_glow[g] = [Color.BLACK, 0.0]
 	current = Poses.GUARD.duplicate()
@@ -229,7 +233,6 @@ func _update_materials() -> void:
 			emit = _flash_color
 			energy = maxf(energy, 2.5 * f)
 		m.albedo_color = col
-		m.emission_enabled = energy > 0.0
 		m.emission = emit
 		m.emission_energy_multiplier = energy
 
