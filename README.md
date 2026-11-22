@@ -5,7 +5,9 @@ You fight a training dummy that throws telegraphed strings of high, low and unbl
 The feel takes inspiration from close-quarters "read and react" brawlers: tight parry timing, a structure
 (posture) meter, and counters that only land once you've opened the enemy up.
 
-Everything is made from primitive shapes and procedural poses, so there are no external assets.
+Everything is made from primitive shapes and procedural animation, so there are no external assets. Every joint
+is driven by a damped spring, with a walk/strafe cycle, lean, a fighter's bounce and hit recoil layered on top.
+There is no hit-freeze: the game never pauses on impact.
 
 ## How to run
 
@@ -19,10 +21,11 @@ Plug in a controller before or after launching. Xbox, PlayStation and most gener
 
 | Action | Controller (Xbox / PlayStation) | Keyboard / mouse |
 |---|---|---|
-| Move / strafe around the dummy | Left stick (or D-pad) | WASD / arrow keys |
+| Move / strafe around the dummy | Left stick (or D-pad) | WASD |
+| **Flick dodge** (any direction) | Flick the right stick: left/right = sidestep, down = backstep, up = slip in | Tap an arrow key |
 | **Block** (hold) | LB / L1 (or LT / L2) | K or right mouse |
 | **Parry** | Tap block right as the hit lands | Same |
-| **Dodge** (back) / **sidestep** (with stick left/right) | RB / R1 (or RT / R2) | Shift or L (+ A/D) |
+| Dodge button (uses left-stick direction) | RB / R1 (or RT / R2) | Shift or L (+ WASD) |
 | **Duck** (hold) | B / Circle | C or Ctrl |
 | **Hop** | A / Cross | Space |
 | Counter strike | X / Square | J or left mouse |
@@ -54,7 +57,7 @@ The dummy's attacking limb glows while it winds up, then **flashes bright just b
 | `scripts/main.gd` | Builds the dojo, camera, HUD, hitstop and camera shake |
 | `scripts/player.gd` | Player state machine and all defensive timing (tuning constants at the top) |
 | `scripts/dummy.gd` | Training dummy AI, attack strings and telegraphs |
-| `scripts/stickman.gd` | Primitive-shape stickman and pose blending |
+| `scripts/stickman.gd` | Primitive-shape stickman, spring-driven joints, walk cycle and secondary motion |
 | `scripts/poses.gd` | Pose library (joint positions) |
 | `scripts/input_setup.gd` | Gamepad and keyboard bindings |
 | `tests/bot_test.gd` | Headless bot that plays the game and prints stats |
@@ -68,4 +71,4 @@ Most of the feel lives in the constants at the top of `player.gd` and `dummy.gd`
 godot --headless --path . --fixed-fps 60 -s tests/bot_test.gd -- perfect
 ```
 
-Modes: `perfect` (reacts to every telegraph), `hold_block`, `dodge`, `idle`. Each plays 60 seconds and prints the stats.
+Modes: `perfect` (reacts to every telegraph), `hold_block`, `dodge`, `flick` (right-stick flicks), `walk`, `idle`. Each plays 60 seconds and prints the stats.

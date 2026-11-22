@@ -69,6 +69,20 @@ const DODGE_BACK := {
 	"r_foot": Vector3(0.20, 0.05, 0.48),
 }
 
+const DODGE_FORWARD := {
+	"hips": Vector3(0.0, 0.78, -0.12),
+	"chest": Vector3(0.05, 1.18, -0.42),
+	"head": Vector3(0.07, 1.36, -0.56),
+	"l_elbow": Vector3(-0.24, 1.02, -0.50),
+	"l_hand": Vector3(-0.10, 1.24, -0.62),
+	"r_elbow": Vector3(0.28, 1.00, -0.42),
+	"r_hand": Vector3(0.14, 1.20, -0.58),
+	"l_knee": Vector3(-0.16, 0.46, -0.52),
+	"l_foot": Vector3(-0.17, 0.05, -0.40),
+	"r_knee": Vector3(0.18, 0.32, 0.18),
+	"r_foot": Vector3(0.21, 0.05, 0.42),
+}
+
 const JUMP := {
 	"hips": Vector3(0.0, 1.00, 0.0),
 	"chest": Vector3(0.0, 1.47, -0.06),

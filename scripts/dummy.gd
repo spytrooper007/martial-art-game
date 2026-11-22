@@ -45,6 +45,7 @@ var last_structure_gain := -10.0
 var open_until := -1.0
 var speed_mult := 1.0
 var _guard_flash_until := -1.0
+var _prev_pos := Vector3.ZERO
 
 
 func _ready() -> void:
@@ -94,13 +95,19 @@ func _process(delta: float) -> void:
 		var yaw := atan2(-to_player.x, -to_player.z)
 		rotation.y = lerp_angle(rotation.y, yaw, 1.0 - exp(-8.0 * delta))
 
+	if delta > 0.0:
+		var vel := (global_position - _prev_pos) / delta
+		body.locomotion = global_transform.basis.inverse() * vel
+	_prev_pos = global_position
+	body.locomotion_weight = 1.0 if state == D.IDLE else (0.4 if state == D.WINDUP else 0.0)
+
 	match state:
 		D.IDLE:
 			if _guard_flash_until > 0.0 and clock > _guard_flash_until:
 				_guard_flash_until = -1.0
 				body.set_pose(Poses.GUARD, 10.0)
 			if dist > APPROACH_DIST:
-				global_position += to_player.normalized() * 1.6 * delta
+				global_position += to_player.normalized() * 1.6 * clampf((dist - APPROACH_DIST) * 2.0, 0.0, 1.0) * delta
 			next_attack_in -= delta
 			if next_attack_in <= 0.0 and dist < ATTACK_START_DIST:
 				_start_combo()
@@ -170,6 +177,7 @@ func _impact() -> void:
 	var result: String = player.resolve_attack(current["kind"], current["unblockable"])
 	if result == "parry":
 		_add_structure(20.0)
+		body.recoil(Vector3(0, 0.5, 2.2))
 		body.flash(Color(0.45, 0.95, 1.0), 0.15)
 		if combo.is_empty() and state != D.BROKEN:
 			_enter(D.STAGGER)
@@ -218,6 +226,7 @@ func receive_strike() -> String:
 	if is_open():
 		body.flash(Color(1, 0.85, 0.3), 0.12)
 		body.set_pose(Poses.HIT, 30.0)
+		body.recoil(Vector3(0, 0.3, 2.6))
 		_add_structure(18.0)
 		return "counter"
 	_add_structure(4.0)

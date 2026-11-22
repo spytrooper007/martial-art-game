@@ -1,7 +1,7 @@
 extends SceneTree
 ## Headless smoke test: plays the prototype with a scripted "bot" and prints stats.
 ## Run: godot --headless --path . --fixed-fps 60 -s tests/bot_test.gd -- <mode>
-## Modes: perfect (reads every telegraph), hold_block, idle, dodge
+## Modes: perfect (reads every telegraph), hold_block, idle, dodge, flick, walk
 
 var main: Node
 var frames := 0
@@ -28,6 +28,8 @@ func _process(_delta: float) -> bool:
 			released.erase(a)
 	var d = main.dummy
 	var p = main.player
+	if mode == "walk":
+		Input.action_press("move_right")
 	if mode == "hold_block":
 		Input.action_press("block")
 	elif d.state == d.D.WINDUP and d.clock - handled_attack > 0.2:
@@ -41,6 +43,10 @@ func _process(_delta: float) -> bool:
 					_press("duck")
 				else:
 					_press("jump")
+			elif mode == "flick":
+				# Simulate a right-stick flick to the right: centre -> full in one frame.
+				Input.action_press("flick_right")
+				released["flick_right"] = frames + 4
 			elif mode == "dodge":
 				Input.action_press("move_left")
 				_press("dodge")

@@ -12,7 +12,7 @@ var camera: Camera3D
 
 var base_time_scale := 1.0
 var cam_shake := 0.0
-var _hitstop_token := 0
+var cam_look := Vector3(0, 1.05, 0.8)
 
 var hp_bar: ProgressBar
 var struct_bar: ProgressBar
@@ -136,7 +136,6 @@ func _build_actors() -> void:
 
 	player.feedback.connect(_show_feedback)
 	dummy.feedback.connect(_show_feedback)
-	player.hitstop.connect(_hitstop)
 	player.shake.connect(func(amount: float) -> void: cam_shake = maxf(cam_shake, amount))
 	player.stats_changed.connect(_refresh_stats)
 
@@ -157,19 +156,11 @@ func _update_camera(delta: float) -> void:
 	var right := (-back).cross(Vector3.UP)
 	var desired := pp + back * 3.3 + Vector3.UP * 1.85 + right * 0.85
 	camera.global_position = camera.global_position.lerp(desired, 1.0 - exp(-7.0 * delta))
-	camera.look_at(pp.lerp(dp, 0.55) + Vector3.UP * 1.05, Vector3.UP)
+	cam_look = cam_look.lerp(pp.lerp(dp, 0.55) + Vector3.UP * 1.05, 1.0 - exp(-9.0 * delta))
+	camera.look_at(cam_look, Vector3.UP)
 	cam_shake = maxf(0.0, cam_shake - delta * 2.5)
 	camera.h_offset = randf_range(-1.0, 1.0) * cam_shake * 0.12
 	camera.v_offset = randf_range(-1.0, 1.0) * cam_shake * 0.12
-
-
-func _hitstop(duration: float) -> void:
-	_hitstop_token += 1
-	var token := _hitstop_token
-	Engine.time_scale = 0.05
-	await get_tree().create_timer(duration, true, false, true).timeout
-	if token == _hitstop_token:
-		Engine.time_scale = base_time_scale
 
 
 # ---------------------------------------------------------------- HUD
@@ -306,6 +297,6 @@ func _show_feedback(text: String, color: Color, sub: String) -> void:
 
 func _update_hint() -> void:
 	if Input.get_connected_joypads().size() > 0:
-		hint_label.text = "Left stick move   |   LB/L1 hold block, tap on impact to PARRY   |   RB/R1 dodge (+stick to sidestep)   |   B/Circle duck   |   A/Cross hop   |   X/Square counter   |   Start reset   |   Back/Select slow-mo"
+		hint_label.text = "Left stick move   |   Right stick FLICK to dodge   |   LB/L1 hold block, tap on impact to PARRY   |   RB/R1 dodge   |   B/Circle duck   |   A/Cross hop   |   X/Square counter   |   Start reset   |   Back/Select slow-mo"
 	else:
-		hint_label.text = "WASD move   |   K or Right-click hold block, tap on impact to PARRY   |   Shift or L dodge (+A/D to sidestep)   |   C or Ctrl duck   |   Space hop   |   J or Left-click counter   |   R reset   |   T slow-mo   (plug in a controller any time)"
+		hint_label.text = "WASD move   |   Arrow keys flick-dodge   |   K or Right-click hold block, tap on impact to PARRY   |   Shift dodge   |   C or Ctrl duck   |   Space hop   |   J or Left-click counter   |   R reset   |   T slow-mo   (plug in a controller any time)"

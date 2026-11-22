@@ -3,10 +3,16 @@ extends RefCounted
 ## Gamepad events use device = -1, so any connected controller works.
 
 static func setup() -> void:
-	_action("move_left", 0.25, [_key(KEY_A), _key(KEY_LEFT), _axis(JOY_AXIS_LEFT_X, -1.0), _btn(JOY_BUTTON_DPAD_LEFT)])
-	_action("move_right", 0.25, [_key(KEY_D), _key(KEY_RIGHT), _axis(JOY_AXIS_LEFT_X, 1.0), _btn(JOY_BUTTON_DPAD_RIGHT)])
-	_action("move_up", 0.25, [_key(KEY_W), _key(KEY_UP), _axis(JOY_AXIS_LEFT_Y, -1.0), _btn(JOY_BUTTON_DPAD_UP)])
-	_action("move_down", 0.25, [_key(KEY_S), _key(KEY_DOWN), _axis(JOY_AXIS_LEFT_Y, 1.0), _btn(JOY_BUTTON_DPAD_DOWN)])
+	_action("move_left", 0.25, [_key(KEY_A), _axis(JOY_AXIS_LEFT_X, -1.0), _btn(JOY_BUTTON_DPAD_LEFT)])
+	_action("move_right", 0.25, [_key(KEY_D), _axis(JOY_AXIS_LEFT_X, 1.0), _btn(JOY_BUTTON_DPAD_RIGHT)])
+	_action("move_up", 0.25, [_key(KEY_W), _axis(JOY_AXIS_LEFT_Y, -1.0), _btn(JOY_BUTTON_DPAD_UP)])
+	_action("move_down", 0.25, [_key(KEY_S), _axis(JOY_AXIS_LEFT_Y, 1.0), _btn(JOY_BUTTON_DPAD_DOWN)])
+
+	# Flick dodge: flick the right stick in a direction. Keyboard: tap an arrow key.
+	_action("flick_left", 0.2, [_key(KEY_LEFT), _axis(JOY_AXIS_RIGHT_X, -1.0)])
+	_action("flick_right", 0.2, [_key(KEY_RIGHT), _axis(JOY_AXIS_RIGHT_X, 1.0)])
+	_action("flick_up", 0.2, [_key(KEY_UP), _axis(JOY_AXIS_RIGHT_Y, -1.0)])
+	_action("flick_down", 0.2, [_key(KEY_DOWN), _axis(JOY_AXIS_RIGHT_Y, 1.0)])
 
 	# Block / parry: LB (L1) or LT (L2). Keyboard: K or right mouse.
 	_action("block", 0.3, [_key(KEY_K), _mouse(MOUSE_BUTTON_RIGHT), _btn(JOY_BUTTON_LEFT_SHOULDER), _axis(JOY_AXIS_TRIGGER_LEFT, 1.0)])

@@ -4,7 +4,6 @@ extends Node3D
 ## dodge / sidestep (i-frames), duck (beats high attacks), hop (beats low sweeps).
 
 signal feedback(text: String, color: Color, sub: String)
-signal hitstop(duration: float)
 signal shake(amount: float)
 signal stats_changed
 
@@ -31,6 +30,12 @@ const ATTACK_RANGE := 2.5       # dummy attacks miss beyond this
 const MIN_DIST := 1.1
 const ARENA_RADIUS := 7.4
 const INPUT_BUFFER := 0.15
+const FLICK_RESET := 0.3        # right stick must come back near centre to re-arm
+const FLICK_TRIGGER := 0.7      # and then pass this...
+const FLICK_TIME := 0.18        # ...within this long, so a slow push isn't a flick
+const FORWARD_DODGE_DISTANCE := 1.0
+const MOVE_ACCEL := 11.0        # higher = snappier footwork, lower = more momentum
+const TURN_SPEED := 16.0
 const HIT_STUN := 0.45
 const GUARD_BREAK_STUN := 1.2
 
@@ -51,13 +56,18 @@ var structure := 0.0
 var last_structure_gain := -10.0
 var block_pressed_at := -10.0
 var last_block_press := -10.0
-var dodge_lateral := false
+enum DodgeMode { BACK, SIDE, FORWARD }
+var dodge_mode := DodgeMode.BACK
+var move_vel := Vector3.ZERO
+var flick_armed := true
+var flick_low_at := 0.0
+var flick_vec := Vector2.ZERO
 var dodge_side := 1.0
 var dodge_radius := 1.6
 var dodge_progress := 0.0
 var strike_done := false
 var jump_height := 0.0
-var buffer := {"dodge": -10.0, "jump": -10.0, "strike": -10.0}
+var buffer := {"dodge": -10.0, "jump": -10.0, "strike": -10.0, "flick": -10.0}
 var stats := {"parries": 0, "perfect": 0, "avoids": 0, "blocks": 0, "hits": 0, "counters": 0}
 
 var _pose_dodge_l: Dictionary
@@ -104,8 +114,10 @@ func _process(delta: float) -> void:
 					_set_state(S.IDLE)
 				_move(delta, BLOCK_MOVE_SPEED if want_block else MOVE_SPEED)
 		S.DUCK:
-			if _consume("dodge"):
-				_start_dodge()
+			if _consume("flick"):
+				_start_dodge(flick_vec)
+			elif _consume("dodge"):
+				_start_dodge(_move_input())
 			elif not Input.is_action_pressed("duck"):
 				_set_state(S.IDLE)
 		S.DODGE:
@@ -116,14 +128,19 @@ func _process(delta: float) -> void:
 			if state_time >= JUMP_TIME:
 				jump_height = 0.0
 				_set_state(S.IDLE)
+				body.impulse("hips", Vector3(0, -1.6, 0))
+				body.impulse("chest", Vector3(0, -1.8, 0))
+				body.impulse("head", Vector3(0, -2.0, 0))
 		S.STRIKE:
 			if not strike_done and state_time >= STRIKE_HIT_AT:
 				strike_done = true
 				_resolve_strike()
 			if state_time > STRIKE_HIT_AT + 0.06:
 				body.set_pose(Poses.GUARD, 14.0)
-			if _consume("dodge"):
-				_start_dodge()   # dodge can cancel a strike, Sifu-style
+			if _consume("flick"):
+				_start_dodge(flick_vec)   # dodges cancel strikes
+			elif _consume("dodge"):
+				_start_dodge(_move_input())
 			elif strike_done and Input.is_action_pressed("duck"):
 				_set_state(S.DUCK)
 			elif strike_done and _consume("jump"):
@@ -138,14 +155,29 @@ func _process(delta: float) -> void:
 				structure = 40.0
 				_set_state(S.IDLE)
 
+	if state != S.IDLE and state != S.BLOCK:
+		move_vel = move_vel.lerp(Vector3.ZERO, 1.0 - exp(-MOVE_ACCEL * delta))
 	body.position.y = jump_height
-	_face_dummy()
+	_face_dummy(delta)
+	body.locomotion = global_transform.basis.inverse() * move_vel
+	body.locomotion_weight = 1.0 if state == S.IDLE else (0.6 if state == S.BLOCK else 0.0)
 
 
 func _read_presses() -> void:
-	for a in buffer:
+	for a in ["dodge", "jump", "strike"]:
 		if Input.is_action_just_pressed(a):
 			buffer[a] = clock
+	# Right-stick flick (or arrow key tap) = dodge in that direction.
+	var r := Input.get_vector("flick_left", "flick_right", "flick_down", "flick_up")
+	var m := r.length()
+	if m < FLICK_RESET:
+		flick_armed = true
+		flick_low_at = clock
+	elif m > FLICK_TRIGGER:
+		if flick_armed and clock - flick_low_at <= FLICK_TIME:
+			flick_vec = r
+			buffer["flick"] = clock
+		flick_armed = false
 	if Input.is_action_just_pressed("block"):
 		if clock - last_block_press >= PARRY_LOCKOUT:
 			block_pressed_at = clock
@@ -160,8 +192,11 @@ func _consume(action: String) -> bool:
 
 
 func _try_actions() -> bool:
+	if _consume("flick"):
+		_start_dodge(flick_vec)
+		return true
 	if _consume("dodge"):
-		_start_dodge()
+		_start_dodge(_move_input())
 		return true
 	if _consume("jump"):
 		_set_state(S.JUMP)
@@ -186,10 +221,13 @@ func _set_state(s: int) -> void:
 		S.DUCK:
 			body.set_pose(Poses.DUCK, 30.0)
 		S.DODGE:
-			if dodge_lateral:
-				body.set_pose(_pose_dodge_r if dodge_side > 0.0 else _pose_dodge_l, 24.0)
-			else:
-				body.set_pose(Poses.DODGE_BACK, 24.0)
+			match dodge_mode:
+				DodgeMode.SIDE:
+					body.set_pose(_pose_dodge_r if dodge_side > 0.0 else _pose_dodge_l, 22.0)
+				DodgeMode.FORWARD:
+					body.set_pose(Poses.DODGE_FORWARD, 22.0)
+				_:
+					body.set_pose(Poses.DODGE_BACK, 22.0)
 		S.JUMP:
 			body.set_pose(Poses.JUMP, 20.0)
 		S.STRIKE:
@@ -201,17 +239,17 @@ func _set_state(s: int) -> void:
 			body.set_pose(Poses.KNEEL, 16.0)
 
 
-func _start_dodge() -> void:
-	var inp := _move_input()
+## dir: x = right/left, y = forward/back (relative to facing the dummy).
+## Sideways = sidestep arc, back = backstep, forward = slip in under the attack.
+func _start_dodge(dir: Vector2) -> void:
 	dodge_radius = _flat(dummy.global_position - global_position).length()
-	if absf(inp.x) > 0.35:
-		dodge_lateral = true
-		dodge_side = signf(inp.x)
-	elif inp.y > 0.5:
-		# Forward + dodge: slip to the side you last stepped toward.
-		dodge_lateral = true
+	if absf(dir.x) > 0.35 and absf(dir.x) >= absf(dir.y) * 0.75:
+		dodge_mode = DodgeMode.SIDE
+		dodge_side = signf(dir.x)
+	elif dir.y > 0.5:
+		dodge_mode = DodgeMode.FORWARD
 	else:
-		dodge_lateral = false
+		dodge_mode = DodgeMode.BACK
 	dodge_progress = 0.0
 	jump_height = 0.0
 	_set_state(S.DODGE)
@@ -220,10 +258,13 @@ func _start_dodge() -> void:
 func _update_dodge() -> void:
 	var p := clampf(state_time / DODGE_TIME, 0.0, 1.0)
 	var eased := 1.0 - pow(1.0 - p, 3.0)
-	var step := (eased - dodge_progress) * DODGE_DISTANCE
+	var dist := FORWARD_DODGE_DISTANCE if dodge_mode == DodgeMode.FORWARD else DODGE_DISTANCE
+	var step := (eased - dodge_progress) * dist
 	dodge_progress = eased
 	var f := _forward()
-	if dodge_lateral:
+	if dodge_mode == DodgeMode.FORWARD:
+		global_position += f * step
+	elif dodge_mode == DodgeMode.SIDE:
 		var right := f.cross(Vector3.UP)
 		global_position += right * dodge_side * step
 		# Keep the same distance so the sidestep arcs around the attacker.
@@ -240,11 +281,11 @@ func _update_dodge() -> void:
 
 func _move(delta: float, speed: float) -> void:
 	var inp := _move_input()
-	if inp.length() < 0.01:
-		return
 	var f := _forward()
 	var r := f.cross(Vector3.UP)
-	global_position += (r * inp.x + f * inp.y) * speed * delta
+	var desired := (r * inp.x + f * inp.y) * speed
+	move_vel = move_vel.lerp(desired, 1.0 - exp(-MOVE_ACCEL * delta))
+	global_position += move_vel * delta
 	if absf(inp.x) > 0.3:
 		dodge_side = signf(inp.x)
 	_clamp_position()
@@ -274,11 +315,11 @@ func _clamp_position() -> void:
 		global_position = Vector3(from_center.x, global_position.y, from_center.z)
 
 
-func _face_dummy() -> void:
-	var t := dummy.global_position
-	t.y = global_position.y
-	if t.distance_to(global_position) > 0.05:
-		look_at(t, Vector3.UP)
+func _face_dummy(delta: float) -> void:
+	var d := _flat(dummy.global_position - global_position)
+	if d.length() > 0.05:
+		var yaw := atan2(-d.x, -d.z)
+		rotation.y = lerp_angle(rotation.y, yaw, 1.0 - exp(-TURN_SPEED * delta))
 
 
 func _resolve_strike() -> void:
@@ -291,7 +332,6 @@ func _resolve_strike() -> void:
 			stats["counters"] += 1
 			feedback.emit("COUNTER", GOLD, "")
 			shake.emit(0.25)
-			hitstop.emit(0.05)
 		"hit":
 			feedback.emit("HIT", GOLD, "")
 			shake.emit(0.2)
@@ -321,8 +361,9 @@ func resolve_attack(kind: String, unblockable: bool) -> String:
 		structure = maxf(0.0, structure - 10.0)
 		body.flash(CYAN, 0.18)
 		_set_state(S.BLOCK)
+		body.impulse("l_hand", Vector3(0, 0.8, -1.5))
+		body.impulse("r_hand", Vector3(0, 0.8, -1.5))
 		feedback.emit("PARRY!", CYAN, "")
-		hitstop.emit(0.09)
 		shake.emit(0.18)
 		stats_changed.emit()
 		return "parry"
@@ -340,6 +381,7 @@ func resolve_attack(kind: String, unblockable: bool) -> String:
 			shake.emit(0.5)
 		else:
 			body.flash(GREY, 0.1)
+			body.recoil(Vector3(0, 0, 1.4))
 			feedback.emit("BLOCKED", GREY, "Tap block right as the hit lands to parry.")
 			shake.emit(0.08)
 		stats_changed.emit()
@@ -363,6 +405,7 @@ func resolve_attack(kind: String, unblockable: bool) -> String:
 	jump_height = 0.0
 	body.flash(RED, 0.25)
 	_set_state(S.HIT)
+	body.recoil(Vector3(0, 0.4 if kind == "high" else -0.6, 3.0))
 	shake.emit(0.4)
 	if hp <= 0.0:
 		hp = 100.0
@@ -381,7 +424,6 @@ func _avoid(what: String, perfect: bool) -> String:
 		dummy.open_for_counter(0.9)
 		body.flash(GOLD, 0.2)
 		feedback.emit("PERFECT " + what, GOLD, "It's open. Counter now!")
-		hitstop.emit(0.06)
 	else:
 		var past := {"DODGE": "DODGED", "DUCK": "DUCKED", "HOP": "HOPPED"}
 		feedback.emit(past[what], WHITE, "")
