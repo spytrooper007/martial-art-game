@@ -1,14 +1,15 @@
 # Stickman Dojo (prototype)
 
-A 3D martial arts combat prototype built around **defence**: parrying, dodging, ducking and hopping.
-You fight a training dummy that throws telegraphed strings of high, low and unblockable attacks.
-The feel takes inspiration from close-quarters "read and react" brawlers: tight parry timing, a structure
-(posture) meter, and counters that only land once you've opened the enemy up.
+A 3D martial arts prototype built around **defensive movement**: dodging, sidestepping, ducking and hopping.
+Right now it's a **movement lab**: just your fighter in an empty dojo, so footwork and dodges can be tuned until
+they feel right on a controller. Opponents come back once the movement feels good.
 
-Everything is made from primitive shapes and procedural animation, so there are no external assets. Every joint
-is driven by a damped spring, with a walk/strafe cycle, lean, a fighter's bounce and hit recoil layered on top.
-There is no hit-freeze and no hit-stun: the game never pauses on impact, and getting hit never takes control away
-from you (you get knocked back a little instead).
+Everything is made from primitive shapes, small procedural shaders and procedural animation, so there are no
+external assets. The fighter is a jointed mannequin in a white gi with a black belt and a red headband. Every joint
+is driven by a damped spring, with a walk cycle, lean, a fighter's bounce and landing recoil layered on top, and
+two-bone IK keeps arms and legs the same length in every pose.
+
+![Dodging in the movement lab](docs/lab-dodge.jpg)
 
 ## How to run
 
@@ -22,55 +23,59 @@ Plug in a controller before or after launching. Xbox, PlayStation and most gener
 
 | Action | Controller (Xbox / PlayStation) | Keyboard / mouse |
 |---|---|---|
-| Move / strafe around the dummy | Left stick (or D-pad) | WASD |
-| **Flick dodge** (any direction) | Flick the right stick: left/right = sidestep, down = backstep, up = slip in | Tap an arrow key |
-| **Block** (hold) | LB / L1 (or LT / L2) | K or right mouse |
-| **Parry** | Tap block right as the hit lands | Same |
-| Dodge button (uses left-stick direction) | RB / R1 (or RT / R2) | Shift or L (+ WASD) |
+| Move (the fighter turns to face where it walks) | Left stick (or D-pad) | WASD |
+| **Flick dodge** (any direction) | Flick the right stick | Tap an arrow key |
+| Dodge button (in the left-stick direction, or back if centred) | RB / R1 (or RT / R2) | Shift or L (+ WASD) |
+| Guard (hold; keeps your facing so you can strafe) | LB / L1 (or LT / L2) | K or right mouse |
 | **Duck** (hold) | B / Circle | C or Ctrl |
-| **Hop** | A / Cross | Space |
-| Counter strike | X / Square | J or left mouse |
+| **Hop** (with a little air control) | A / Cross | Space |
+| Jab | X / Square | J or left mouse |
 | Reset | Start / Options | R |
-| Slow-motion training (50%) | Back / View / Share | T |
+| Slow motion (50%) | Back / View / Share | T |
 
-## How the fight works
+Directions are relative to the camera, which always looks the same way, so "up" on the stick is always "into the
+screen". The dodge animation depends on where the dodge goes compared to where you're facing: to the side is a
+**sidestep**, away is a **backstep**, toward is a short **slip** in.
 
-The dummy's attacking limb glows while it winds up, then **flashes bright just before impact**. That flash is your cue.
+The top-left panel shows your state, speed, and a lamp that lights while you're invulnerable. Your dodge also leaves
+blue afterimages for exactly that long.
 
-| Telegraph | Attack | Answers |
-|---|---|---|
-| Yellow, `HIGH` | High punch | Duck, dodge, parry, or block |
-| Blue, `LOW` | Low sweep | Hop, dodge, parry, or block |
-| Red, `UNBLOCKABLE` | High or low, can't be blocked or parried | Duck it (high), hop it (low), or dodge |
+## Tuning the feel
 
-- **Parry**: press block within 0.16 s of impact. Mashing doesn't work: re-pressing within 0.35 s won't open a new window.
-  Parries fill the dummy's structure. Parrying the last hit of a string staggers it.
-- **Block**: safe, but each blocked hit fills *your* structure. When it's full your guard breaks: you're shoved back
-  and can't block for 0.8 s, but you can still move and dodge.
-- **Perfect avoid**: dodge, duck or hop within about 0.22 s of impact. The dummy's string is cancelled and it's open for a counter.
-- **Counter**: strikes are guarded unless the dummy is open (after a perfect avoid or a final parry). Counters fill its structure.
-- **Structure break**: fill the dummy's structure bar to knock it down for free hits. It gets a little faster each time.
-- Strings are 1 to 3 attacks long, and follow-ups come faster than openers.
+All the numbers are constants at the top of `scripts/player.gd`:
+
+| Constant | What it changes |
+|---|---|
+| `MOVE_SPEED`, `MOVE_ACCEL` | Walking speed, and how snappy vs. slidey starting and stopping feels |
+| `TURN_SPEED` | How quickly the fighter turns to face its walking direction |
+| `DODGE_TIME`, `DODGE_DISTANCE`, `FORWARD_DODGE_DISTANCE` | Dodge length and travel |
+| `DODGE_IFRAMES` | How long a dodge makes you invulnerable |
+| `INPUT_BUFFER` | How early a press still counts when you're mid-move |
+| `FLICK_TRIGGER`, `FLICK_TIME`, `FLICK_RESET` | How hard and fast a right-stick flick has to be |
+| `JUMP_TIME`, `JUMP_HEIGHT` | Hop arc |
+
+The follow camera's distance, follow speed and look-ahead are `CAM_OFFSET`, `CAM_FOLLOW` and `CAM_LEAD` in
+`scripts/main.gd`.
 
 ## Code layout
 
 | File | What it does |
 |---|---|
-| `scripts/main.gd` | Builds the dojo, camera, HUD, hitstop and camera shake |
-| `scripts/player.gd` | Player state machine and all defensive timing (tuning constants at the top) |
-| `scripts/dummy.gd` | Training dummy AI, attack strings and telegraphs |
-| `scripts/stickman.gd` | Primitive-shape stickman, spring-driven joints, walk cycle and secondary motion |
-| `scripts/poses.gd` | Pose library (joint positions) |
+| `scripts/main.gd` | Sets up the scene, follow camera and HUD |
+| `scripts/player.gd` | Player state machine, movement and dodges (tuning constants at the top) |
+| `scripts/stickman.gd` | Mannequin body, spring-driven joints, IK, walk cycle, afterimage trails |
+| `scripts/poses.gd` | Pose library (joint positions), including attack poses kept for later |
+| `scripts/dojo.gd` | The dojo set, lighting and environment (floor, mat, shoji walls, lanterns) |
+| `scripts/fx.gd` | Visual-only effects: dust, afterimages, and spark/ring bursts for when combat returns |
 | `scripts/input_setup.gd` | Gamepad and keyboard bindings |
-| `tests/bot_test.gd` | Headless bot that plays the game and prints stats |
-
-Most of the feel lives in the constants at the top of `player.gd` and `dummy.gd` (`PARRY_WINDOW`, `PERFECT_WINDOW`,
-`DODGE_IFRAMES`, windup times). Tweak those first.
+| `tests/bot_test.gd` | Headless bot that drives the fighter and checks movement |
 
 ## Headless smoke test
 
 ```
-godot --headless --path . --fixed-fps 60 -s tests/bot_test.gd -- perfect
+godot --headless --path . --fixed-fps 60 -s tests/bot_test.gd -- mixed
 ```
 
-Modes: `perfect` (reacts to every telegraph), `hold_block`, `dodge`, `flick` (right-stick flicks), `walk`, `idle`. Each plays 60 seconds and prints the stats.
+Modes: `walk`, `dodge` (dodge button in rotating directions), `flick` (right-stick flicks), `mixed` (everything),
+`idle`. Each runs 30 seconds, prints movement stats, and exits with code 1 if the fighter leaves the arena or a
+dodge fails to move it.
