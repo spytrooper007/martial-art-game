@@ -5,13 +5,17 @@ extends Node3D
 const InputSetup = preload("res://scripts/input_setup.gd")
 const PlayerScript = preload("res://scripts/player.gd")
 const DummyScript = preload("res://scripts/dummy.gd")
+const Dojo = preload("res://scripts/dojo.gd")
+const FxScript = preload("res://scripts/fx.gd")
 
 var player: Node3D
 var dummy: Node3D
 var camera: Camera3D
+var fx: Node3D
 
 var base_time_scale := 1.0
 var cam_shake := 0.0
+var _shake_t := 0.0
 var cam_look := Vector3(0, 1.05, 0.8)
 
 var hp_bar: ProgressBar
@@ -60,74 +64,16 @@ func _process(delta: float) -> void:
 # ---------------------------------------------------------------- world
 
 func _build_world() -> void:
-	var env := Environment.new()
-	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color(0.12, 0.14, 0.22)
-	sky_mat.sky_horizon_color = Color(0.55, 0.42, 0.38)
-	sky_mat.ground_horizon_color = Color(0.3, 0.25, 0.24)
-	sky_mat.ground_bottom_color = Color(0.08, 0.08, 0.1)
-	var sky := Sky.new()
-	sky.sky_material = sky_mat
-	env.background_mode = Environment.BG_SKY
-	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.7
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.glow_enabled = true
-	env.glow_intensity = 0.9
-	env.glow_bloom = 0.1
-	var we := WorldEnvironment.new()
-	we.environment = env
-	add_child(we)
-
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-55, 35, 0)
-	sun.light_energy = 1.1
-	sun.light_color = Color(1.0, 0.92, 0.82)
-	sun.shadow_enabled = true
-	add_child(sun)
-
-	var floor_mesh := PlaneMesh.new()
-	floor_mesh.size = Vector2(60, 60)
-	add_child(_mesh(floor_mesh, Color(0.16, 0.13, 0.12), Vector3.ZERO))
-
-	var mat := CylinderMesh.new()
-	mat.top_radius = 7.8
-	mat.bottom_radius = 7.8
-	mat.height = 0.02
-	mat.radial_segments = 64
-	add_child(_mesh(mat, Color(0.42, 0.33, 0.24), Vector3(0, 0.01, 0)))
-
-	var ring := TorusMesh.new()
-	ring.inner_radius = 7.55
-	ring.outer_radius = 7.7
-	ring.rings = 96
-	var ring_mi := _mesh(ring, Color(0.75, 0.2, 0.15), Vector3(0, 0.02, 0))
-	ring_mi.scale = Vector3(1, 0.15, 1)
-	add_child(ring_mi)
-
-	# Pillars so you can read motion and sidesteps against the background.
-	for i in 10:
-		var ang := TAU * float(i) / 10.0
-		var pillar := BoxMesh.new()
-		pillar.size = Vector3(0.6, 4.0, 0.6)
-		add_child(_mesh(pillar, Color(0.35, 0.12, 0.1), Vector3(cos(ang) * 11.0, 2.0, sin(ang) * 11.0)))
-
-
-func _mesh(m: Mesh, color: Color, pos: Vector3) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	mi.mesh = m
-	var sm := StandardMaterial3D.new()
-	sm.albedo_color = color
-	sm.roughness = 0.9
-	mi.material_override = sm
-	mi.position = pos
-	return mi
+	Dojo.build(self)
+	fx = FxScript.new()
+	add_child(fx)
 
 
 func _build_actors() -> void:
 	dummy = DummyScript.new()
 	player = PlayerScript.new()
+	dummy.fx = fx
+	player.fx = fx
 	player.dummy = dummy
 	dummy.player = player
 	add_child(dummy)
@@ -142,7 +88,7 @@ func _build_actors() -> void:
 
 func _build_camera() -> void:
 	camera = Camera3D.new()
-	camera.fov = 62.0
+	camera.fov = 60.0
 	add_child(camera)
 	camera.position = Vector3(0.9, 1.9, 5.0)
 	camera.current = true
@@ -154,13 +100,19 @@ func _update_camera(delta: float) -> void:
 	var back := Vector3(pp.x - dp.x, 0.0, pp.z - dp.z)
 	back = back.normalized() if back.length() > 0.05 else Vector3.BACK
 	var right := (-back).cross(Vector3.UP)
-	var desired := pp + back * 3.3 + Vector3.UP * 1.85 + right * 0.85
+	var desired := pp + back * 3.4 + Vector3.UP * 2.0 + right * 1.5
 	camera.global_position = camera.global_position.lerp(desired, 1.0 - exp(-7.0 * delta))
 	cam_look = cam_look.lerp(pp.lerp(dp, 0.55) + Vector3.UP * 1.05, 1.0 - exp(-9.0 * delta))
 	camera.look_at(cam_look, Vector3.UP)
+	# Smooth shake: summed sines at unrelated rates instead of per-frame random jitter,
+	# scaled by shake^2 so light taps barely move and heavy hits punch.
 	cam_shake = maxf(0.0, cam_shake - delta * 2.5)
-	camera.h_offset = randf_range(-1.0, 1.0) * cam_shake * 0.12
-	camera.v_offset = randf_range(-1.0, 1.0) * cam_shake * 0.12
+	_shake_t += delta * 38.0
+	var k := minf(1.0, cam_shake * 1.6)
+	k *= k
+	camera.h_offset = (sin(_shake_t * 1.7) + 0.5 * sin(_shake_t * 3.1 + 1.0)) * k * 0.09
+	camera.v_offset = (sin(_shake_t * 2.3 + 2.0) + 0.5 * sin(_shake_t * 3.7)) * k * 0.09
+	camera.rotation.z += sin(_shake_t * 1.3) * k * 0.012
 
 
 # ---------------------------------------------------------------- HUD
@@ -256,14 +208,20 @@ func _spacer(horizontal: bool, ratio: float = 1.0) -> Control:
 
 func _bar(color: Color) -> ProgressBar:
 	var b := ProgressBar.new()
-	b.custom_minimum_size = Vector2(340, 16)
+	b.custom_minimum_size = Vector2(340, 18)
 	b.max_value = 100.0
 	b.show_percentage = false
 	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var fill := StyleBoxFlat.new()
 	fill.bg_color = color
+	fill.set_corner_radius_all(4)
+	fill.border_width_bottom = 3
+	fill.border_color = color.darkened(0.35)
 	var bg := StyleBoxFlat.new()
-	bg.bg_color = Color(0, 0, 0, 0.55)
+	bg.bg_color = Color(0.05, 0.04, 0.04, 0.6)
+	bg.set_corner_radius_all(5)
+	bg.set_border_width_all(2)
+	bg.border_color = Color(1, 1, 1, 0.18)
 	b.add_theme_stylebox_override("fill", fill)
 	b.add_theme_stylebox_override("background", bg)
 	return b

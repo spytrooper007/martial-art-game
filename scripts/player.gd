@@ -47,6 +47,7 @@ const RED := Color(1.0, 0.3, 0.25)
 
 var dummy: Node3D
 var body: Node3D
+var fx: Node3D        # optional effects node (scripts/fx.gd); purely visual
 
 var state := S.IDLE
 var state_time := 0.0
@@ -81,7 +82,10 @@ func _ready() -> void:
 	_pose_dodge_r = Poses.mirror(Poses.DODGE_LEFT)
 	_pose_block = Poses.BLOCK_OVER
 	body = Stickman.new()
-	body.base_color = Color(0.95, 0.95, 0.98)
+	body.base_color = Color(0.94, 0.93, 0.9)      # white gi
+	body.joint_color = Color(0.86, 0.84, 0.8)
+	body.belt_color = Color(0.06, 0.06, 0.07)     # black belt
+	body.band_color = Color(0.85, 0.12, 0.1)      # red headband
 	add_child(body)
 
 
@@ -129,6 +133,7 @@ func _process(delta: float) -> void:
 			if state_time >= JUMP_TIME:
 				jump_height = 0.0
 				_set_state(S.IDLE)
+				_fx_dust()
 				body.impulse("hips", Vector3(0, -1.6, 0))
 				body.impulse("chest", Vector3(0, -1.8, 0))
 				body.impulse("head", Vector3(0, -2.0, 0))
@@ -224,9 +229,11 @@ func _set_state(s: int) -> void:
 					body.set_pose(Poses.DODGE_BACK, 22.0)
 		S.JUMP:
 			body.set_pose(Poses.JUMP, 20.0)
+			_fx_dust()
 		S.STRIKE:
 			strike_done = false
 			body.set_pose(Poses.STRIKE, 38.0)
+			body.trail(Color(0.35, 0.33, 0.3), 0.12, "r_arm", 0.025)
 
 
 ## dir: x = right/left, y = forward/back (relative to facing the dummy).
@@ -243,6 +250,9 @@ func _start_dodge(dir: Vector2) -> void:
 	dodge_progress = 0.0
 	jump_height = 0.0
 	_set_state(S.DODGE)
+	# Afterimages for exactly the invulnerable part of the dodge, so you can see your i-frames.
+	body.trail(Color(0.3, 0.5, 0.75), DODGE_IFRAMES, "", 0.045)
+	_fx_dust()
 
 
 func _update_dodge() -> void:
@@ -319,13 +329,16 @@ func _resolve_strike() -> void:
 	var result: String = dummy.receive_strike()
 	match result:
 		"counter":
+			_fx("counter", _strike_point())
 			stats["counters"] += 1
 			feedback.emit("COUNTER", GOLD, "")
 			shake.emit(0.25)
 		"hit":
+			_fx("counter", _strike_point())
 			feedback.emit("HIT", GOLD, "")
 			shake.emit(0.2)
 		"blocked":
+			_fx("guard_hit", _strike_point())
 			feedback.emit("", GREY, "The dummy guards normal strikes. Hit it after a parry or a perfect avoid.")
 	stats_changed.emit()
 
@@ -368,6 +381,7 @@ func resolve_attack(kind: String, unblockable: bool) -> String:
 			body.flash(RED, 0.3)
 			body.recoil(Vector3(0, -0.5, 4.0))
 			guard_locked_until = clock + GUARD_BREAK_LOCK
+			_fx("guard_break", body.joint_world("chest"))
 			move_vel = -_forward() * 4.0   # shoved back, but you keep control
 			_set_state(S.IDLE)
 			feedback.emit("GUARD BROKEN", RED, "Can't block for a moment. Blocking fills your structure, so parry or avoid instead.")
@@ -415,6 +429,8 @@ func _avoid(what: String, perfect: bool) -> String:
 		stats["perfect"] += 1
 		dummy.open_for_counter(0.9)
 		body.flash(GOLD, 0.2)
+		body.trail(GOLD * 0.3, 0.16, "", 0.05)
+		_fx("perfect", body.joint_world("chest"))
 		feedback.emit("PERFECT " + what, GOLD, "It's open. Counter now!")
 	else:
 		var past := {"DODGE": "DODGED", "DUCK": "DUCKED", "HOP": "HOPPED"}
@@ -425,3 +441,21 @@ func _avoid(what: String, perfect: bool) -> String:
 
 func is_busy() -> bool:
 	return state != S.IDLE and state != S.BLOCK
+
+
+# ---------------------------------------------------------------- visual effects only
+
+func _fx(kind: String, pos: Vector3) -> void:
+	if fx != null:
+		fx.burst(kind, pos)
+
+
+func _fx_dust() -> void:
+	if fx != null:
+		fx.dust(Vector3(global_position.x, 0.06, global_position.z), 8)
+
+
+func _strike_point() -> Vector3:
+	var a: Vector3 = body.joint_world("r_hand")
+	var b: Vector3 = dummy.body.joint_world("chest") if dummy.body != null else a
+	return a.lerp(b, 0.5)

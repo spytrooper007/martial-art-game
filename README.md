@@ -5,8 +5,13 @@ You fight a training dummy that throws telegraphed strings of high, low and unbl
 The feel takes inspiration from close-quarters "read and react" brawlers: tight parry timing, a structure
 (posture) meter, and counters that only land once you've opened the enemy up.
 
-Everything is made from primitive shapes and procedural animation, so there are no external assets. Every joint
-is driven by a damped spring, with a walk/strafe cycle, lean, a fighter's bounce and hit recoil layered on top.
+Everything is made from primitive shapes, small procedural shaders and procedural animation, so there are no
+external assets. The fighters are jointed mannequins (you in a white gi with a black belt and red headband, the
+dummy in wood). Every joint is driven by a damped spring, with a walk/strafe cycle, lean, a fighter's bounce and
+hit recoil layered on top, and two-bone IK keeps arms and legs the same length in every pose. The fight happens
+on a mat in a lantern-lit dojo.
+
+![Before and after the visual pass](docs/before-after.jpg)
 There is no hit-freeze and no hit-stun: the game never pauses on impact, and getting hit never takes control away
 from you (you get knocked back a little instead).
 
@@ -35,6 +40,9 @@ Plug in a controller before or after launching. Xbox, PlayStation and most gener
 
 ## How the fight works
 
+Visual cues: the attacking limb glows and glints just before impact, parries burst cyan, clean hits flash red,
+perfect avoids ring gold, and your dodge leaves blue afterimages for exactly as long as you're invulnerable.
+
 The dummy's attacking limb glows while it winds up, then **flashes bright just before impact**. That flash is your cue.
 
 | Telegraph | Attack | Answers |
@@ -56,10 +64,12 @@ The dummy's attacking limb glows while it winds up, then **flashes bright just b
 
 | File | What it does |
 |---|---|
-| `scripts/main.gd` | Builds the dojo, camera, HUD, hitstop and camera shake |
+| `scripts/main.gd` | Sets up the scene, lock-on camera, smooth camera shake and HUD |
+| `scripts/dojo.gd` | The dojo set, lighting and environment (floor, mat, shoji walls, lanterns) |
+| `scripts/fx.gd` | Visual-only effects: sparks, shockwave rings, glow pops, dust, flash light |
 | `scripts/player.gd` | Player state machine and all defensive timing (tuning constants at the top) |
 | `scripts/dummy.gd` | Training dummy AI, attack strings and telegraphs |
-| `scripts/stickman.gd` | Primitive-shape stickman, spring-driven joints, walk cycle and secondary motion |
+| `scripts/stickman.gd` | Mannequin body, spring-driven joints, IK, walk cycle, afterimage trails |
 | `scripts/poses.gd` | Pose library (joint positions) |
 | `scripts/input_setup.gd` | Gamepad and keyboard bindings |
 | `tests/bot_test.gd` | Headless bot that plays the game and prints stats |

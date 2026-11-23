@@ -1,38 +1,50 @@
 extends Node3D
-## A stickman built from primitive meshes. Poses are joint positions; the body
-## blends toward a target pose each frame and re-orients every limb cylinder.
+## A fighter built from primitive meshes. Poses are joint positions; every joint is
+## a damped spring toward the target pose, with procedural layers (walk, bounce,
+## breathing) on top. Two-bone IK keeps limb lengths fixed in every pose, and the
+## torso twists with the hands and feet, so poses read as a body, not a wireframe.
+## Purely visual: nothing here affects gameplay timing.
 
 const Poses = preload("res://scripts/poses.gd")
 const JOINTS := ["hips", "chest", "head", "l_elbow", "l_hand", "r_elbow", "r_hand", "l_knee", "l_foot", "r_knee", "r_foot"]
 const GROUPS := ["torso", "l_arm", "r_arm", "l_leg", "r_leg"]
 
-# [from, to, radius, group]
-const BONES := [
-	["hips", "chest", 0.06, "torso"],
-	["chest", "neck", 0.04, "torso"],
-	["l_shoulder", "r_shoulder", 0.045, "torso"],
-	["l_hip", "r_hip", 0.05, "torso"],
-	["l_shoulder", "l_elbow", 0.045, "l_arm"],
-	["l_elbow", "l_hand", 0.04, "l_arm"],
-	["r_shoulder", "r_elbow", 0.045, "r_arm"],
-	["r_elbow", "r_hand", 0.04, "r_arm"],
-	["l_hip", "l_knee", 0.055, "l_leg"],
-	["l_knee", "l_foot", 0.05, "l_leg"],
-	["r_hip", "r_knee", 0.055, "r_leg"],
-	["r_knee", "r_foot", 0.05, "r_leg"],
+# Fixed segment lengths (metres). Poses give hand / foot targets and elbow / knee hints.
+const UPPER_ARM := 0.30
+const FOREARM := 0.29
+const THIGH := 0.50
+const SHIN := 0.49
+const SPINE := 0.47
+const NECK := 0.25
+const SHOULDER_HALF := 0.19
+const HIP_HALF := 0.095
+
+# [from, to, radius at from, radius at to, group]: tapered limb segments.
+const LIMBS := [
+	["l_shoulder", "l_elbow", 0.064, 0.05, "l_arm"],
+	["l_elbow", "l_hand", 0.05, 0.04, "l_arm"],
+	["r_shoulder", "r_elbow", 0.064, 0.05, "r_arm"],
+	["r_elbow", "r_hand", 0.05, 0.04, "r_arm"],
+	["l_hip", "l_knee", 0.088, 0.062, "l_leg"],
+	["l_knee", "l_foot", 0.062, 0.045, "l_leg"],
+	["r_hip", "r_knee", 0.088, 0.062, "r_leg"],
+	["r_knee", "r_foot", 0.062, 0.045, "r_leg"],
+	["chest", "head", 0.048, 0.042, "torso"],
 ]
 
-# [joint, radius, group]
-const CAPS := [
-	["l_shoulder", 0.05, "torso"], ["r_shoulder", 0.05, "torso"],
-	["l_hip", 0.055, "torso"], ["r_hip", 0.055, "torso"],
-	["l_elbow", 0.045, "l_arm"], ["l_hand", 0.065, "l_arm"],
-	["r_elbow", 0.045, "r_arm"], ["r_hand", 0.065, "r_arm"],
-	["l_knee", 0.055, "l_leg"], ["l_foot", 0.06, "l_leg"],
-	["r_knee", 0.055, "r_leg"], ["r_foot", 0.06, "r_leg"],
+# [joint, radius, group]: joint caps, in the darker joint tone.
+const BALLS := [
+	["l_shoulder", 0.07, "l_arm"], ["r_shoulder", 0.07, "r_arm"],
+	["l_elbow", 0.052, "l_arm"], ["r_elbow", 0.052, "r_arm"],
+	["l_knee", 0.066, "l_leg"], ["r_knee", 0.066, "r_leg"],
+	["l_hand", 0.064, "l_arm"], ["r_hand", 0.064, "r_arm"],
 ]
 
+## Colours: body, joint caps, belt, and an optional headband (alpha 0 = none).
 var base_color := Color(0.93, 0.93, 0.96)
+var joint_color := Color(0.8, 0.8, 0.84)
+var belt_color := Color(0.08, 0.08, 0.09)
+var band_color := Color(0, 0, 0, 0)
 var blend_speed := 12.0
 var bob_amount := 1.0
 
@@ -53,67 +65,167 @@ const JOINT_STIFFNESS := {
 
 var current := {}
 var target := {}
+var solved := {}       # joint -> local position after IK (what is drawn)
 var _vel := {}
 var _loco_w := 1.0
 var _phase := 0.0
-var _materials := {}
+var _mats := {}        # group -> [body material, joint material]
+var _accent_mats := []
 var _glow := {}        # group -> [Color, energy]
 var _flash_color := Color.WHITE
 var _flash_left := 0.0
 var _flash_total := 0.1
-var _bones := []       # [MeshInstance3D, from, to]
-var _caps := []        # [MeshInstance3D, joint]
+var _limbs := []       # [MeshInstance3D, from, to]
+var _balls := []       # [MeshInstance3D, joint, radius]
+var _parts := []       # every visible MeshInstance3D, for afterimages
+var _torso: MeshInstance3D
+var _chest_mi: MeshInstance3D
+var _pelvis: MeshInstance3D
 var _head: MeshInstance3D
+var _belt: MeshInstance3D
+var _belt_tails := []
+var _band: MeshInstance3D
+var _band_tails := []
+var _feet := []
+var _blob: MeshInstance3D
 var _time := 0.0
+var _trail_left := 0.0
+var _trail_every := 0.04
+var _trail_next := 0.0
+var _trail_color := Color.WHITE
+var _trail_group := ""
+var _ghost_mat_proto: StandardMaterial3D
 
 
 func _ready() -> void:
 	for g in GROUPS:
-		var m := StandardMaterial3D.new()
-		m.albedo_color = base_color
-		m.roughness = 0.55
-		# Emission stays enabled (energy 0 when unused) so glows/flashes never
-		# switch shader variants mid-fight, which can hitch the frame.
-		m.emission_enabled = true
-		m.emission_energy_multiplier = 0.0
-		_materials[g] = m
+		_mats[g] = [_make_mat(base_color, 0.6), _make_mat(joint_color, 0.45)]
 		_glow[g] = [Color.BLACK, 0.0]
 	current = Poses.GUARD.duplicate()
 	target = Poses.GUARD.duplicate()
 	for j in JOINTS:
 		_vel[j] = Vector3.ZERO
 
-	for b in BONES:
+	for l in LIMBS:
 		var mesh := CylinderMesh.new()
-		mesh.top_radius = b[2]
-		mesh.bottom_radius = b[2]
+		mesh.bottom_radius = l[2]
+		mesh.top_radius = l[3]
 		mesh.height = 1.0
-		mesh.radial_segments = 10
+		mesh.radial_segments = 14
 		mesh.rings = 1
-		var mi := MeshInstance3D.new()
-		mi.mesh = mesh
-		mi.material_override = _materials[b[3]]
-		add_child(mi)
-		_bones.append([mi, b[0], b[1]])
-	for c in CAPS:
-		var s := SphereMesh.new()
-		s.radius = c[1]
-		s.height = c[1] * 2.0
-		s.radial_segments = 10
-		s.rings = 6
-		var mi := MeshInstance3D.new()
-		mi.mesh = s
-		mi.material_override = _materials[c[2]]
-		add_child(mi)
-		_caps.append([mi, c[0]])
-	var hs := SphereMesh.new()
-	hs.radius = 0.125
-	hs.height = 0.25
-	_head = MeshInstance3D.new()
-	_head.mesh = hs
-	_head.material_override = _materials["torso"]
-	add_child(_head)
+		var mi := _part(mesh, _mats[l[4]][0])
+		_limbs.append([mi, l[0], l[1]])
+	for b in BALLS:
+		var mi := _part(_sphere(1.0), _mats[b[2]][1])
+		_balls.append([mi, b[0], b[1]])
+
+	var torso_mesh := CylinderMesh.new()
+	torso_mesh.bottom_radius = 0.115
+	torso_mesh.top_radius = 0.17
+	torso_mesh.height = 1.0
+	torso_mesh.radial_segments = 18
+	torso_mesh.rings = 2
+	_torso = _part(torso_mesh, _mats["torso"][0])
+	_chest_mi = _part(_sphere(1.0), _mats["torso"][0])
+	_pelvis = _part(_sphere(1.0), _mats["torso"][0])
+	_head = _part(_sphere(1.0, 20, 12), _mats["torso"][0])
+	for side in [-1.0, 1.0]:
+		_feet.append([_part(_sphere(1.0), _mats["l_leg" if side < 0.0 else "r_leg"][1]), side])
+
+	var belt_mat := _make_mat(belt_color, 0.8)
+	_accent_mats.append([belt_mat, belt_color])
+	var torus := TorusMesh.new()
+	torus.inner_radius = 0.125
+	torus.outer_radius = 0.152
+	torus.rings = 24
+	torus.ring_segments = 8
+	_belt = _part(torus, belt_mat)
+	for i in 2:
+		var tail := BoxMesh.new()
+		tail.size = Vector3(0.04, 1.0, 0.012)
+		_belt_tails.append(_part(tail, belt_mat))
+
+	if band_color.a > 0.0:
+		var band_mat := _make_mat(band_color, 0.7)
+		_accent_mats.append([band_mat, band_color])
+		var bt := TorusMesh.new()
+		bt.inner_radius = 0.104
+		bt.outer_radius = 0.126
+		bt.rings = 24
+		bt.ring_segments = 8
+		_band = _part(bt, band_mat)
+		for i in 2:
+			var tail := BoxMesh.new()
+			tail.size = Vector3(0.035, 1.0, 0.01)
+			_band_tails.append(_part(tail, band_mat))
+
+	_build_blob_shadow()
+	_ghost_mat_proto = StandardMaterial3D.new()
+	_ghost_mat_proto.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_ghost_mat_proto.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	_ghost_mat_proto.no_depth_test = false
+	_ghost_mat_proto.cull_mode = BaseMaterial3D.CULL_BACK
 	_update_meshes()
+	# Draw one invisible afterimage now so its shader compiles at load, not mid-fight.
+	spawn_afterimage.call_deferred(Color.BLACK, 0.05)
+
+
+func _make_mat(color: Color, rough: float) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = color
+	m.roughness = rough
+	m.rim_enabled = true
+	m.rim = 0.35
+	m.rim_tint = 0.4
+	# Emission stays enabled (energy 0 when unused) so glows/flashes never
+	# switch shader variants mid-fight, which can hitch the frame.
+	m.emission_enabled = true
+	m.emission_energy_multiplier = 0.0
+	return m
+
+
+func _sphere(r: float, seg: int = 16, rings: int = 10) -> SphereMesh:
+	var s := SphereMesh.new()
+	s.radius = r
+	s.height = r * 2.0
+	s.radial_segments = seg
+	s.rings = rings
+	return s
+
+
+func _part(mesh: Mesh, mat: Material) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = mat
+	add_child(mi)
+	_parts.append(mi)
+	return mi
+
+
+func _build_blob_shadow() -> void:
+	var grad := Gradient.new()
+	grad.set_color(0, Color(0, 0, 0, 0.55))
+	grad.set_color(1, Color(0, 0, 0, 0.0))
+	grad.add_point(0.45, Color(0, 0, 0, 0.35))
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	tex.width = 64
+	tex.height = 64
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.albedo_texture = tex
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(1.0, 1.0)
+	_blob = MeshInstance3D.new()
+	_blob.mesh = plane
+	_blob.material_override = m
+	_blob.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_blob.top_level = true
+	add_child(_blob)
 
 
 ## Blend toward a pose. Missing joints keep the guard stance.
@@ -154,6 +266,52 @@ func flash(color: Color, duration: float = 0.15) -> void:
 	_flash_total = duration
 
 
+## World position of a solved joint (for placing effects).
+func joint_world(j: String) -> Vector3:
+	if solved.has(j):
+		return to_global(solved[j])
+	return global_position
+
+
+## Leave a fading afterimage trail for `duration` seconds. group "" = whole body.
+func trail(color: Color, duration: float, group: String = "", every: float = 0.04) -> void:
+	_trail_color = color
+	_trail_left = duration
+	_trail_group = group
+	_trail_every = every
+	_trail_next = 0.0
+
+
+## One frozen, additive, fading copy of the body (or of one limb group).
+func spawn_afterimage(color: Color, life: float = 0.28, group: String = "") -> void:
+	var host := get_parent()
+	if host == null or not is_inside_tree():
+		return
+	host = host.get_parent() if host.get_parent() != null else host
+	var ghost := Node3D.new()
+	host.add_child(ghost)
+	var mat: StandardMaterial3D = _ghost_mat_proto.duplicate()
+	mat.albedo_color = color
+	var group_mats := []
+	if group != "":
+		group_mats = _mats[group]
+	for mi in _parts:
+		var part: MeshInstance3D = mi
+		if not part.visible:
+			continue
+		if group != "" and not group_mats.has(part.material_override):
+			continue
+		var g := MeshInstance3D.new()
+		g.mesh = part.mesh
+		g.material_override = mat
+		g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		ghost.add_child(g)
+		g.global_transform = part.global_transform
+	var tw := ghost.create_tween()
+	tw.tween_property(mat, "albedo_color", Color.BLACK, life).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+	tw.tween_callback(ghost.queue_free)
+
+
 func _process(delta: float) -> void:
 	_time += delta
 	_loco_w = lerpf(_loco_w, locomotion_weight, 1.0 - exp(-10.0 * delta))
@@ -174,6 +332,12 @@ func _process(delta: float) -> void:
 	_flash_left = maxf(0.0, _flash_left - delta)
 	_update_materials()
 	_update_meshes()
+	if _trail_left > 0.0:
+		_trail_left -= delta
+		_trail_next -= delta
+		if _trail_next <= 0.0:
+			_trail_next = _trail_every
+			spawn_afterimage(_trail_color, 0.26, _trail_group)
 
 
 ## Target pose plus procedural layers: walk cycle, lean into movement,
@@ -218,49 +382,161 @@ func _layered_goal(delta: float) -> Dictionary:
 func _update_materials() -> void:
 	var f := _flash_left / _flash_total if _flash_total > 0.0 else 0.0
 	for g in GROUPS:
-		var m: StandardMaterial3D = _materials[g]
 		var gc: Color = _glow[g][0]
 		var ge: float = _glow[g][1]
-		var col := base_color
-		var emit := Color.BLACK
-		var energy := 0.0
-		if ge > 0.0:
-			col = base_color.lerp(gc, 0.75)
-			emit = gc
-			energy = ge
-		if f > 0.0:
-			col = col.lerp(_flash_color, f)
-			emit = _flash_color
-			energy = maxf(energy, 2.5 * f)
-		m.albedo_color = col
-		m.emission = emit
-		m.emission_energy_multiplier = energy
+		var tones := [base_color, joint_color]
+		for i in 2:
+			var m: StandardMaterial3D = _mats[g][i]
+			var col: Color = tones[i]
+			var emit := Color.BLACK
+			var energy := 0.0
+			if ge > 0.0:
+				col = col.lerp(gc, 0.75)
+				emit = gc
+				energy = ge
+			if f > 0.0:
+				col = col.lerp(_flash_color, f)
+				emit = _flash_color
+				energy = maxf(energy, 2.5 * f)
+			m.albedo_color = col
+			m.emission = emit
+			m.emission_energy_multiplier = energy
+	for am in _accent_mats:
+		var m: StandardMaterial3D = am[0]
+		var c: Color = am[1]
+		m.albedo_color = c.lerp(_flash_color, f) if f > 0.0 else c
+		m.emission = _flash_color
+		m.emission_energy_multiplier = 2.5 * f
+
+
+## Two-bone IK: returns [mid, end] with fixed segment lengths, bending toward `pole`.
+static func _two_bone(root: Vector3, goal: Vector3, pole: Vector3, l1: float, l2: float, fallback: Vector3) -> Array:
+	var d := goal - root
+	var dist := clampf(d.length(), absf(l1 - l2) + 0.02, l1 + l2 - 0.0005)
+	var dir := d.normalized() if d.length() > 0.0001 else Vector3.DOWN
+	var end := root + dir * dist
+	var a := clampf((l1 * l1 + dist * dist - l2 * l2) / (2.0 * l1 * dist), -1.0, 1.0)
+	var bend := pole - root
+	bend -= dir * bend.dot(dir)
+	if bend.length() < 0.001:
+		bend = fallback - dir * fallback.dot(dir)
+	bend = bend.normalized()
+	var mid := root + dir * (l1 * a) + bend * (l1 * sqrt(1.0 - a * a))
+	return [mid, end]
 
 
 func _update_meshes() -> void:
-	var p := current.duplicate()
+	var p := current
+	var s := {}
 
+	# Spine: keep fixed lengths, keep the posed directions.
 	var hips: Vector3 = p["hips"]
-	var chest: Vector3 = p["chest"]
-	var head: Vector3 = p["head"]
-	var up := (chest - hips).normalized()
-	var side := up.cross(Vector3(0, 0, 1)).normalized()
-	if side.length() < 0.01:
-		side = Vector3.RIGHT
-	p["l_shoulder"] = chest - side * 0.17 - up * 0.03
-	p["r_shoulder"] = chest + side * 0.17 - up * 0.03
-	p["l_hip"] = hips - side * 0.10
-	p["r_hip"] = hips + side * 0.10
-	p["neck"] = head + (chest - head).normalized() * 0.11
+	var up: Vector3 = (p["chest"] - hips)
+	up = up.normalized() if up.length() > 0.001 else Vector3.UP
+	var chest: Vector3 = hips + up * SPINE
+	var neck_dir: Vector3 = (p["head"] - p["chest"])
+	neck_dir = neck_dir.normalized() if neck_dir.length() > 0.001 else up
+	var head: Vector3 = chest + neck_dir * NECK
 
-	for b in _bones:
-		_place_bone(b[0], p[b[1]], p[b[2]])
-	for c in _caps:
-		(c[0] as MeshInstance3D).position = p[c[1]]
-	_head.position = head
+	# Torso twist: the shoulders turn toward whichever hand is further forward
+	# (a punch rotates the whole upper body), the hips toward the lead foot.
+	var base_side: Vector3 = up.cross(Vector3(0, 0, 1))
+	base_side = base_side.normalized() if base_side.length() > 0.01 else Vector3.RIGHT
+	var sh_twist: float = clampf((p["l_hand"].z - p["r_hand"].z) * 0.9, -0.7, 0.7)
+	var hip_twist: float = clampf((p["l_foot"].z - p["r_foot"].z) * 0.35, -0.45, 0.45)
+	var side_sh: Vector3 = base_side.rotated(up, sh_twist)
+	var hip_up: Vector3 = Vector3.UP.lerp(up, 0.5).normalized()
+	var side_hp: Vector3 = base_side.rotated(hip_up, hip_twist)
+
+	s["hips"] = hips
+	s["chest"] = chest
+	s["head"] = head
+	s["l_shoulder"] = chest - side_sh * SHOULDER_HALF - up * 0.05
+	s["r_shoulder"] = chest + side_sh * SHOULDER_HALF - up * 0.05
+	s["l_hip"] = hips - side_hp * HIP_HALF - hip_up * 0.04
+	s["r_hip"] = hips + side_hp * HIP_HALF - hip_up * 0.04
+
+	var back: Vector3 = side_sh.cross(up)        # +Z when facing -Z
+	var hip_back: Vector3 = side_hp.cross(hip_up)
+	for side in ["l", "r"]:
+		var sgn := -1.0 if side == "l" else 1.0
+		var arm := _two_bone(s[side + "_shoulder"], p[side + "_hand"], p[side + "_elbow"],
+				UPPER_ARM, FOREARM, -up * 0.6 + back * 0.4 + side_sh * sgn * 0.5)
+		s[side + "_elbow"] = arm[0]
+		s[side + "_hand"] = arm[1]
+		var leg := _two_bone(s[side + "_hip"], p[side + "_foot"], p[side + "_knee"],
+				THIGH, SHIN, -hip_back)
+		s[side + "_knee"] = leg[0]
+		s[side + "_foot"] = leg[1]
+	solved = s
+
+	# Limbs and caps.
+	for l in _limbs:
+		_place_segment(l[0], s[l[1]], s[l[2]], side_sh, 1.0)
+	for b in _balls:
+		var r: float = b[2]
+		(b[0] as MeshInstance3D).transform = Transform3D(Basis().scaled(Vector3(r, r, r)), s[b[1]])
+
+	# Torso: a flattened tapered column from the pelvis to the chest, rounded off
+	# at both ends.
+	var hip_top: Vector3 = hips + up * 0.04
+	_place_segment(_torso, hip_top, chest - up * 0.03, side_sh, 0.62)
+	var cb := _basis(side_sh, up)
+	_chest_mi.transform = Transform3D(cb * Basis().scaled(Vector3(0.2, 0.11, 0.115)), chest - up * 0.05)
+	var hb := _basis(side_hp, hip_up)
+	_pelvis.transform = Transform3D(hb * Basis().scaled(Vector3(0.155, 0.11, 0.11)), hips - hip_up * 0.01)
+	_belt.transform = Transform3D(hb * Basis().scaled(Vector3(1.0, 1.5, 0.8)), hips + hip_up * 0.065)
+	var belt_front: Vector3 = hips + hip_up * 0.06 - hip_back * 0.105
+	for i in _belt_tails.size():
+		var off: Vector3 = side_hp * (0.035 if i == 0 else -0.03)
+		var sway: Vector3 = -_vel["hips"] * 0.04
+		var tip: Vector3 = belt_front + off * 1.6 - Vector3.UP * (0.17 - 0.02 * i) - hip_back * 0.03 + sway
+		_place_box(_belt_tails[i], belt_front + off, tip, side_hp)
+
+	# Head: a slightly tall egg facing forward, with a headband if this fighter has one.
+	var hu := neck_dir
+	var head_side: Vector3 = (side_sh - hu * side_sh.dot(hu)).normalized()
+	var hdb := _basis(head_side, hu)
+	_head.transform = Transform3D(hdb * Basis().scaled(Vector3(0.112, 0.132, 0.122)), head)
+	if _band != null:
+		var hb2 := hdb * Basis().scaled(Vector3(1.04, 1.7, 1.06))
+		_band.transform = Transform3D(hb2, head + hu * 0.035)
+		var hback: Vector3 = head_side.cross(hu)
+		var knot: Vector3 = head + hu * 0.035 + hback * 0.128
+		var drift: Vector3 = -_vel["head"] * 0.05
+		for i in _band_tails.size():
+			var spread := head_side * (0.05 if i == 0 else -0.045)
+			var tip: Vector3 = knot + hback * 0.17 - Vector3.UP * (0.12 + 0.03 * i) + spread + drift
+			_place_box(_band_tails[i], knot, tip, head_side)
+
+	# Feet: flattened ellipsoids pointing the way the hips face.
+	var fwd_h: Vector3 = Vector3(-hip_back.x, 0.0, -hip_back.z)
+	fwd_h = fwd_h.normalized() if fwd_h.length() > 0.01 else Vector3.FORWARD
+	var fside: Vector3 = fwd_h.cross(Vector3.UP).normalized()
+	for f in _feet:
+		var key := "l_foot" if f[1] < 0.0 else "r_foot"
+		var fb := Basis(fside, Vector3.UP, -fwd_h)
+		var pos: Vector3 = s[key] + fwd_h * 0.055 + Vector3(0, -0.01, 0)
+		(f[0] as MeshInstance3D).transform = Transform3D(fb * Basis().scaled(Vector3(0.055, 0.042, 0.11)), pos)
+
+	# Soft contact shadow that stays on the floor and shrinks when airborne.
+	if _blob != null and is_inside_tree():
+		var g := global_transform
+		var centre: Vector3 = g * ((s["l_foot"] + s["r_foot"]) * 0.5 * 0.6 + hips * 0.4)
+		var height := maxf(0.0, g.origin.y)
+		var k := clampf(1.0 - height * 0.9, 0.4, 1.0)
+		_blob.global_transform = Transform3D(Basis().scaled(Vector3(1.0 * k, 1.0, 0.85 * k)).rotated(Vector3.UP, global_rotation.y), Vector3(centre.x, 0.028, centre.z))
 
 
-func _place_bone(mi: MeshInstance3D, a: Vector3, b: Vector3) -> void:
+## Orthonormal basis with +X = side, +Y = up (side is re-orthogonalised against up).
+static func _basis(side: Vector3, up: Vector3) -> Basis:
+	var x := (side - up * side.dot(up)).normalized()
+	var z := x.cross(up).normalized()
+	return Basis(x, up, z)
+
+
+## Stretch a unit-height mesh between a and b; side_hint orients its flat axis.
+func _place_segment(mi: MeshInstance3D, a: Vector3, b: Vector3, side_hint: Vector3, depth: float) -> void:
 	var d := b - a
 	var length := d.length()
 	if length < 0.001:
@@ -268,9 +544,15 @@ func _place_bone(mi: MeshInstance3D, a: Vector3, b: Vector3) -> void:
 		return
 	mi.visible = true
 	var y := d / length
-	var x := y.cross(Vector3.FORWARD)
+	var x := side_hint - y * side_hint.dot(y)
 	if x.length() < 0.01:
-		x = y.cross(Vector3.RIGHT)
+		x = y.cross(Vector3.FORWARD)
+		if x.length() < 0.01:
+			x = y.cross(Vector3.RIGHT)
 	x = x.normalized()
 	var z := x.cross(y).normalized()
-	mi.transform = Transform3D(Basis(x, y * length, z), (a + b) * 0.5)
+	mi.transform = Transform3D(Basis(x, y * length, z * depth), (a + b) * 0.5)
+
+
+func _place_box(mi: MeshInstance3D, a: Vector3, b: Vector3, side_hint: Vector3) -> void:
+	_place_segment(mi, a, b, side_hint, 1.0)

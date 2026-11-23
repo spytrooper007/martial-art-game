@@ -31,6 +31,7 @@ const ATTACK_START_DIST := 2.4
 
 var player: Node3D
 var body: Node3D
+var fx: Node3D        # optional effects node (scripts/fx.gd); purely visual
 var label: Label3D
 
 var state := D.IDLE
@@ -46,11 +47,14 @@ var open_until := -1.0
 var speed_mult := 1.0
 var _guard_flash_until := -1.0
 var _prev_pos := Vector3.ZERO
+var _glinted := false
 
 
 func _ready() -> void:
 	body = Stickman.new()
-	body.base_color = Color(0.32, 0.36, 0.44)
+	body.base_color = Color(0.5, 0.33, 0.2)       # wooden training dummy
+	body.joint_color = Color(0.22, 0.14, 0.09)
+	body.belt_color = Color(0.12, 0.2, 0.32)
 	add_child(body)
 	label = Label3D.new()
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -116,6 +120,9 @@ func _process(delta: float) -> void:
 			var c: Color = current["color"]
 			if left <= FLASH_LEAD:
 				body.set_glow(current["limb"], c, 6.0)
+				if not _glinted:
+					_glinted = true
+					_fx("glint", body.joint_world("r_hand" if current["kind"] == "high" else "r_foot"))
 				label.modulate = Color.WHITE
 				label.scale = Vector3.ONE * 1.25
 			else:
@@ -164,6 +171,7 @@ func _start_combo() -> void:
 func _begin_attack(key: String, followup: bool) -> void:
 	current = ATTACKS[key]
 	current_windup = current["windup"] * (0.72 if followup else 1.0) / speed_mult
+	_glinted = false
 	_enter(D.WINDUP)
 	body.set_pose(Poses.WINDUP_HIGH if current["kind"] == "high" else Poses.WINDUP_LOW, 9.0)
 	label.text = current["label"]
@@ -177,7 +185,9 @@ func _impact() -> void:
 	body.clear_glow()
 	label.visible = false
 	_enter(D.RECOVER)
+	body.trail(current["color"], 0.12, current["limb"], 0.025)
 	var result: String = player.resolve_attack(current["kind"], current["unblockable"])
+	_impact_fx(result)
 	if result == "parry":
 		_add_structure(20.0)
 		body.recoil(Vector3(0, 0.5, 2.2))
@@ -205,6 +215,7 @@ func _enter(s: int) -> void:
 			label.visible = true
 		D.BROKEN:
 			combo.clear()
+			_fx("break", body.joint_world("chest"))
 			body.set_pose(Poses.KNEEL, 12.0)
 			body.clear_glow()
 			label.text = "BROKEN"
@@ -247,3 +258,29 @@ func _add_structure(amount: float) -> void:
 		speed_mult = minf(1.4, speed_mult + 0.08)
 		feedback.emit("STRUCTURE BROKEN!", GREEN, "Free hits! The dummy gets a bit faster each time.")
 	structure_changed.emit()
+
+
+# ---------------------------------------------------------------- visual effects only
+
+func _fx(kind: String, pos: Vector3) -> void:
+	if fx != null:
+		fx.burst(kind, pos)
+
+
+## Sparks where the attack met the player: their guard for parries and blocks,
+## the head or shins for clean hits.
+func _impact_fx(result: String) -> void:
+	if fx == null or player == null or player.body == null:
+		return
+	var pb: Node3D = player.body
+	var guard: Vector3 = (pb.joint_world("l_hand") + pb.joint_world("r_hand")) * 0.5
+	match result:
+		"parry":
+			_fx("parry", guard)
+		"block":
+			_fx("block", guard)
+		"hit":
+			if current["kind"] == "high":
+				_fx("hit", pb.joint_world("head").lerp(pb.joint_world("chest"), 0.4))
+			else:
+				_fx("hit", pb.joint_world("r_knee").lerp(pb.joint_world("r_foot"), 0.5))
